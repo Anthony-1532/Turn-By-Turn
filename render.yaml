@@ -1,0 +1,61 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# Secrets marked `sync: false` are entered in the Render dashboard on first deploy.
+services:
+  - type: web
+    name: turnbyturn-api
+    runtime: node
+    plan: starter
+    region: frankfurt
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - fromGroup: turnbyturn-shared
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: SQUADCO_PAYMENT_CALLBACK_URL
+        sync: false
+
+  # Scheduled work: overdue cycles, resolution escalation, reminders, stale payments,
+  # payout requeries. Every task is idempotent.
+  - type: cron
+    name: turnbyturn-jobs
+    runtime: node
+    plan: starter
+    region: frankfurt
+    schedule: "*/10 * * * *"
+    buildCommand: npm ci --omit=dev
+    startCommand: npm run jobs
+    envVars:
+      - fromGroup: turnbyturn-shared
+
+envVarGroups:
+  - name: turnbyturn-shared
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: SQUADCO_SECRET_KEY
+        sync: false
+      - key: SQUADCO_MERCHANT_ID
+        sync: false
+      - key: SQUADCO_BASE_URL
+        value: https://api-d.squadco.com
+      - key: SQUADCO_SMS_SENDER_ID
+        value: TurnByTurn
+      - key: ZEPTOMAIL_TOKEN
+        sync: false
+      - key: ZEPTOMAIL_FROM_ADDRESS
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false
+      - key: AUTO_START_PAYOUTS
+        value: "false"
+      - key: ENABLE_DEV_ROUTES
+        value: "false"

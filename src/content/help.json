@@ -1,0 +1,17 @@
+{
+  "paymentHelp": [
+    { "q": "Where does my contribution go?", "a": "Contributions are collected by TurnByTurn's payment partner (Squadco) and held until the whole cycle is paid. They are never sent to the group organiser directly." },
+    { "q": "What is the 2% service fee?", "a": "TurnByTurn adds a 2% fee on top of each contribution you pay. It is never deducted from anyone's payout." },
+    { "q": "Can I pay in parts?", "a": "Yes. Choose \"Pay part\", enter an amount, and pay the rest any time before the due date. Each part payment has its own receipt." },
+    { "q": "I paid but it still shows unpaid.", "a": "Bank confirmations can take a few minutes. Pull to refresh. If it still shows unpaid after 30 minutes, contact support with your payment reference (it starts with TRX-)." },
+    { "q": "I was charged more than I owed.", "a": "Your original payment record is kept exactly as received. Open the payment and tap \"Submit for review\"; our team will refund or credit the excess." },
+    { "q": "Why is the payout on hold?", "a": "A payout is released only after every member has paid for the cycle. The Cycle Progress screen shows who still owes." },
+    { "q": "My payout failed.", "a": "Your money is safe. Failed transfers are retried by our team; you will see the status change to \"Delayed recovery\" and then \"Sent\"." },
+    { "q": "Can the amount or turn order change?", "a": "No. Amount and turn order are locked once the group starts." }
+  ],
+  "support": {
+    "email": "support@turnbyturn.app",
+    "phone": "+2340000000000",
+    "hours": "Mon–Sat, 8am–8pm WAT"
+  }
+}

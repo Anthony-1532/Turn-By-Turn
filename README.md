@@ -28,7 +28,7 @@ npm run seed                  # fixture data (wipes the target DB)
 npm run dev                   # http://localhost:4000
 ```
 
-* API docs: `http://localhost:4000/api/v1/docs` (Swagger UI) or `/api/v1/openapi.json` (import into Postman)
+* API docs: [`docs/API.md`](docs/API.md) (endpoint reference), `http://localhost:4000/api/v1/docs` (Swagger UI) or `/api/v1/openapi.json` (import into Postman)
 * Health check: `GET /health`
 * Tests: `npm test` (needs a local MongoDB; override with `TEST_MONGODB_URI`)
 * Regenerate the OpenAPI spec after changing routes: `npm run docs`

@@ -6,7 +6,7 @@ services:
     runtime: node
     plan: starter
     region: frankfurt
-    buildCommand: npm ci --omit=dev
+    buildCommand: npm ci --include=dev && npm run build && npm prune --omit=dev
     startCommand: npm start
     healthCheckPath: /health
     autoDeploy: true
@@ -27,7 +27,7 @@ services:
     plan: starter
     region: frankfurt
     schedule: "*/10 * * * *"
-    buildCommand: npm ci --omit=dev
+    buildCommand: npm ci --include=dev && npm run build && npm prune --omit=dev
     startCommand: npm run jobs
     envVars:
       - fromGroup: turnbyturn-shared

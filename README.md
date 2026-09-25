@@ -15,7 +15,7 @@ This service backs the Flutter app (Android and iOS) and the Vercel marketing si
 | Email | Zeptomail |
 | Push | Firebase Cloud Messaging |
 
-Runtime: Node.js 20+ and Express 4, with JWT access tokens and rotating refresh tokens.
+Runtime: **TypeScript** (strict mode) on Node.js 20+ and Express 4, with JWT access tokens and rotating refresh tokens. Source lives in `src/` and compiles to `dist/`.
 
 ---
 
@@ -25,8 +25,19 @@ Runtime: Node.js 20+ and Express 4, with JWT access tokens and rotating refresh 
 cp .env.example .env          # only MONGODB_URI is required locally
 npm install
 npm run seed                  # fixture data (wipes the target DB)
-npm run dev                   # http://localhost:4000
+npm run dev                   # http://localhost:4000 (tsx watch, no build step)
 ```
+
+| Script | What it does |
+|---|---|
+| `npm run dev` | Run from source with reload (`tsx watch src/server.ts`) |
+| `npm run build` | Compile `src/` → `dist/` (`tsc -p tsconfig.build.json`) |
+| `npm start` | Run the compiled server (`node dist/server.js`) |
+| `npm run typecheck` | Type-check `src/`, `test/` and `scripts/` (strict) |
+| `npm test` | End-to-end tests (`node --test` via `tsx`) |
+| `npm run jobs` / `jobs:dev` | Scheduled jobs from `dist/` / from source |
+| `npm run seed` | Load fixture data (wipes the target DB) |
+| `npm run docs` | Regenerate `docs/openapi.json` |
 
 * API docs: [`docs/API.md`](docs/API.md) (endpoint reference), `http://localhost:4000/api/v1/docs` (Swagger UI) or `/api/v1/openapi.json` (import into Postman)
 * Health check: `GET /health`
@@ -169,7 +180,8 @@ every `REMINDER_COOLDOWN_HOURS` (default 24). Members still in cooldown come bac
 ## Deploying on Render
 
 1. Push this repo and create a **Blueprint** from `render.yaml`. It creates the web service
-   (health check `/health`), the cron job, and a shared env group.
+   (health check `/health`), the cron job, and a shared env group. The build step installs dev
+   dependencies to compile TypeScript, then prunes them (`npm ci --include=dev && npm run build && npm prune --omit=dev`).
 2. Fill in the `sync: false` secrets: `MONGODB_URI` (MongoDB Atlas), `SQUADCO_SECRET_KEY`,
    `SQUADCO_MERCHANT_ID`, `ZEPTOMAIL_TOKEN`, `ZEPTOMAIL_FROM_ADDRESS`, `FIREBASE_SERVICE_ACCOUNT`
    (raw JSON or base64), `PUBLIC_BASE_URL`, and `CORS_ORIGINS` (include the Vercel site origin).
@@ -183,8 +195,8 @@ Dev routes (`/api/v1/dev/*`) are off in production unless `ENABLE_DEV_ROUTES=tru
 
 ```
 src/
-  app.js, server.js, db.js      Express app, boot, Mongo connection
-  config/env.js                  all configuration (env-driven)
+  app.ts, server.ts, db.ts      Express app, boot, Mongo connection
+  config/env.ts                  all configuration (env-driven)
   models/                        Mongoose schemas (User, Group, Membership, Cycle, Contribution,
                                  PaymentAttempt, Payout, Transaction, + Announcement, ActivityLog,
                                  Notification, Reminder, SupportTicket, Otp, RefreshToken, RateLimit, …)
@@ -192,10 +204,25 @@ src/
                                  rateLimiter, notify, squadco, zeptomail, push, references
   routes/                        auth, users, groups, money, account, public, webhooks, admin, dev
   jobs/                          scheduled tasks + Render cron entry point
-  seed/seed.js                   fixture data
-docs/openapi.json, docs/ERRORS.md
+  seed/seed.ts                   fixture data
+docs/API.md, docs/openapi.json, docs/ERRORS.md
 test/                            end-to-end API tests (node:test + supertest)
 ```
+
+### Typing conventions
+
+* **Models:** schemas are declared once and Mongoose infers the TypeScript types from them, virtuals
+  included. Each model file exports its document type (`UserDoc`, `GroupDoc`, `PaymentAttemptDoc`, …).
+  Status fields are string-literal unions built from `as const` arrays (`PayoutStatus`,
+  `ContributionStatus`, …), so an invalid status fails to compile.
+* **Requests:** handlers call `parseBody(schema, req)` / `parseQuery(schema, req)`. These return the
+  zod-inferred type, so every request body is typed and validated in one step. `currentUser(req)`
+  returns the signed-in `UserDoc` on routes behind `auth`.
+* **Responses:** `toJson(doc)` returns `Json<Doc>`, which is the document's schema fields with
+  ObjectIds as strings and `_id` replaced by `id`.
+* **Money:** amounts are `Kobo` (an alias for `number`) at every money-handling signature.
+* **Gateway results** are discriminated unions (`PaymentOutcome`, `TransferOutcome`), so every
+  handler has to deal with each outcome.
 
 ---
 
@@ -218,7 +245,7 @@ test/                            end-to-end API tests (node:test + supertest)
 * The request and response field names for `/transaction/initiate`, `/transaction/verify/:ref`,
   `/payout/account/lookup`, `/payout/transfer`, `/payout/requery` and `/sms/send/instant` follow
   Squadco's public docs. Confirm them in the sandbox, especially the transfer status values and the
-  shape of the transfer webhook (`src/services/squadco.js` and `src/routes/webhooks.js` hold all of
+  shape of the transfer webhook (`src/services/squadco.ts` and `src/routes/webhooks.ts` hold all of
   this mapping).
 * The bank list in `src/content/banks.json` uses NIP institution codes. Check it against Squadco's
   bank-code list.

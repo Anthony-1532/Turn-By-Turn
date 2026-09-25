@@ -4,6 +4,11 @@ Base URL: `https://<your-render-host>/api/v1` (locally `http://localhost:4000/ap
 
 Machine-readable spec: `GET /api/v1/openapi.json` · Swagger UI: `GET /api/v1/docs` · Health: `GET /health`
 
+The server is written in **TypeScript** (strict mode) on Express 4. Each section below says which
+source file implements it, and the [TypeScript types](#typescript-types) section maps every
+response object to the exported type that defines it. Backend engineers can work from those types;
+the Flutter team can use the JSON examples.
+
 ---
 
 ## Conventions
@@ -44,6 +49,8 @@ Branch on `code`. `retryAfter` (seconds) is also sent as the `Retry-After` heade
 ---
 
 ## 1. Auth
+
+Source: `src/routes/auth.ts` · services `otp.ts`, `tokens.ts`, `rateLimiter.ts`
 
 | Method | Path | Auth | Screen |
 |---|---|---|---|
@@ -128,6 +135,8 @@ Errors: `INVALID_CREDENTIALS` (401, `details.attemptsRemaining`), `TOO_MANY_ATTE
 
 ## 2. Profile & settings (`/users/me`)
 
+Source: `src/routes/users.ts` · bank lookup in `services/squadco.ts` (`resolveAccount`)
+
 | Method | Path | Screen |
 |---|---|---|
 | GET | `/users/me` | Profile |
@@ -193,6 +202,8 @@ Any subset of `push, email, sms, paymentReminders, groupActivity, announcements,
 ---
 
 ## 3. Home, history & notifications
+
+Source: `src/routes/account.ts`
 
 | Method | Path | Screen |
 |---|---|---|
@@ -260,6 +271,8 @@ Notification `type` values: `cycle_opened`, `payment_received`, `partial_payment
 
 ## 4. Groups: create (coordinator wizard)
 
+Source: `src/routes/groups.ts` · helpers in `services/groups.ts` (`setupStatus`, `groupSummary`, `memberDisplay`)
+
 | Step | Method | Path |
 |---|---|---|
 | Basics (1/5) | POST | `/groups` |
@@ -320,6 +333,8 @@ Errors: `GROUP_SETUP_INCOMPLETE` (422, `details.missing[]`: e.g. `["members","pa
 ---
 
 ## 5. Groups: join & view
+
+Source: `src/routes/groups.ts` · `services/groups.ts` (`paymentRoster`, `cycleView`, `nextRecipient`)
 
 | Method | Path | Who | Screen |
 |---|---|---|---|
@@ -391,10 +406,10 @@ Cycle `status`: `open` → `complete`, or `open` → `overdue` → `resolution_r
 ### `GET /groups/:id/payment-status` (optional `?cycleId=`, defaults to the current cycle)
 ```json
 { "cycle": {…}, "paidCount": 6, "unpaidCount": 4,
-  "members": [ { …Member, "contributionId": "…", "amountDue": 5000000, "amountPaid": 2000000,
+  "members": [ { …Member, "memberStatus": "joined", "contributionId": "…", "amountDue": 5000000, "amountPaid": 2000000,
                  "outstanding": 3000000, "status": "partial", "paidAt": "…", "confirmedAt": null, "isRecipient": false } ] }
 ```
-Contribution `status`: `unpaid`, `partial`, `paid`, `reconciliation_required`, `under_review`.
+In a roster row, `status` is the **contribution** status (`unpaid`, `partial`, `paid`, `reconciliation_required`, `under_review`). The member's own status (`joined`, `invited`, …) is in `memberStatus`.
 
 ### `GET /groups/:id/cycles/current`
 Payment-status payload + `outstandingMembers[]` + `payout` (Payout object). Drives both Cycle Progress and Cycle Overdue. When nothing is active it returns `{ cycle: null }`.
@@ -408,6 +423,8 @@ Query `before`, `limit` (≤100). → `{ activity: [{ id, eventType, summary, ac
 ---
 
 ## 6. Coordinator-only
+
+Source: `src/routes/groups.ts` (dashboard, member detail, settings, announcements, reminders) · `src/routes/money.ts` (start payout)
 
 All of these return `403 ACCESS_DENIED` for plain members.
 
@@ -457,6 +474,8 @@ Each member can be reminded at most once per 24h. Errors: `REMINDER_COOLDOWN` (4
 ---
 
 ## 7. Paying a contribution
+
+Source: `src/routes/money.ts` · money logic in `services/payments.ts` (`quote`, `initiateContributionPayment`, `applyPaymentOutcome`, `receiptFor`)
 
 Flow: **my-contribution → quote → pay → open checkoutUrl → verify → receipt**
 
@@ -537,6 +556,8 @@ For contributions with `status: "reconciliation_required"` (the gateway confirme
 
 ## 8. Payouts
 
+Source: `src/routes/money.ts` · state machine in `services/payouts.ts` (`startPayout`, `retryPayout`, `applyTransferOutcome`, `describePayout`)
+
 | Method | Path | Who |
 |---|---|---|
 | GET | `/payouts` | my payouts across groups |
@@ -572,6 +593,8 @@ No body. → `{ payout }` (usually already `sent` or `failed`; `processing` if S
 
 ## 9. Support, reference data & admin
 
+Source: `src/routes/account.ts` (support) · `src/routes/public.ts` (reference data) · `src/routes/admin.ts` (staff)
+
 ### Support (Bearer)
 | Method | Path | Body |
 |---|---|---|
@@ -603,15 +626,19 @@ Manual, human-in-the-loop resolution. Non-staff get `403 ACCESS_DENIED`.
 
 ## 10. Webhooks & internal
 
+Source: `src/routes/webhooks.ts` · `src/app.ts` (internal jobs route) · jobs in `src/jobs/tasks.ts`
+
 ### `POST /webhooks/squadco` (Public, signed)
 Set this as the webhook URL in the Squadco dashboard. The raw body is verified with HMAC-SHA512 (header `x-squad-encrypted-body`); a bad signature gets `401`. Handles `charge_successful` / failed charges (keyed by `TransactionRef` = our `TRX-…` reference) and transfer events (`PAY-…`). Each event is processed once: duplicates return `{ received: true, duplicate: true }`, and a crash returns 500 so Squadco retries.
 
 ### `POST /internal/jobs/run` (header `x-cron-secret: $CRON_SECRET`)
-Runs the scheduled jobs immediately. Normally Render's cron runs `npm run jobs` every 10 minutes instead.
+Runs the scheduled jobs immediately and returns a `JobReport` (`{ overdueCycles: 0, … }` with an `{ error }` entry for any job that failed). Normally the Render cron job runs `npm run jobs` (`node dist/jobs/run.js`) every 10 minutes instead.
 
 ---
 
 ## 11. Dev-only (`ENABLE_DEV_ROUTES`, off in production)
+
+Source: `src/routes/dev.ts`
 
 With Squadco in mock mode:
 
@@ -625,9 +652,76 @@ Mock test values: OTP `123456` when `OTP_DEV_FIXED_CODE=123456`; bank accounts e
 
 ---
 
+## TypeScript types
+
+Every object in this reference has an exported TypeScript type. Import them from the source
+instead of redefining shapes. The types match what the JSON actually contains (for example,
+ObjectIds are typed as `string`).
+
+### Response objects
+
+| Object in this doc | Type | Defined in |
+|---|---|---|
+| Error body `{ error: { code, … } }` | `ErrorCode` (all codes), `ApiError` | `src/utils/errors.ts` |
+| Session (`accessToken`, `refreshToken`, …) | `Session` | `src/services/tokens.ts` |
+| Fee breakdown (`contribution`, `serviceFee`, `total`, `feePercent`) | `FeeBreakdown` | `src/utils/money.ts` |
+| Group | `GroupSummary` (= `Json<GroupDoc>` + `inviteLink`, `feeNote`, `perMemberCharge`) | `src/services/groups.ts` |
+| Wizard state `setup` | `SetupStatus` | `src/services/groups.ts` |
+| Member object | `MemberView` | `src/services/groups.ts` |
+| Cycle object | `CycleView` (= `Json<CycleDoc>` + `daysUntilDue`) | `src/services/groups.ts` |
+| Payment-status row | `RosterRow`. Its `status` is the contribution status; the membership status is `memberStatus` | `src/services/groups.ts` |
+| Payment-status payload | `PaymentRoster` | `src/services/groups.ts` |
+| `nextRecipient` | `NextRecipient` | `src/services/groups.ts` |
+| Quote | `Quote` | `src/services/payments.ts` |
+| Receipt | `Receipt` | `src/services/payments.ts` |
+| Verify `result` | `PaymentResult` | `src/routes/money.ts` |
+| Payout object | `PayoutView` | `src/services/payouts.ts` |
+| Transaction row | `Json<TransactionDoc>` | `src/models/Transaction.ts` |
+| Job report | `JobReport` | `src/jobs/tasks.ts` |
+
+`Json<D>` (in `src/models/plugins.ts`) is the serialised form of a document: its schema fields with
+ObjectIds as strings and `_id` replaced by `id`. Computed (virtual) fields such as
+`outstandingAmount` and `percentReceived` **are** in the JSON responses but are **not** part of the
+`Json<D>` type, so read them from the documented examples.
+
+### Enumerations
+
+Each enum is exported both as a runtime array and as a string-literal type, so invalid values fail to compile.
+
+| Values | Array → type | Defined in |
+|---|---|---|
+| Group status: `draft`, `active`, `completed` | `GROUP_STATUSES` → `GroupStatus` | `src/models/Group.ts` |
+| Member role: `member`, `coordinator` | `MEMBERSHIP_ROLES` → `MembershipRole` | `src/models/Membership.ts` |
+| Member status: `pending`, `invited`, `joined`, `removed` | `MEMBERSHIP_STATUSES` → `MembershipStatus` | `src/models/Membership.ts` |
+| Cycle status: `open`, `complete`, `overdue`, `resolution_required` | `CYCLE_STATUSES` → `CycleStatus` | `src/models/Cycle.ts` |
+| Frequency: `weekly`, `biweekly`, `monthly` | `FREQUENCIES` → `Frequency` | `src/utils/dates.ts` |
+| Contribution status: `unpaid`, `partial`, `paid`, `reconciliation_required`, `under_review` | `CONTRIBUTION_STATUSES` → `ContributionStatus` | `src/models/Contribution.ts` |
+| Payment kind / status | `PAYMENT_KINDS` → `PaymentKind`, `PAYMENT_STATUSES` → `PaymentStatus` | `src/models/PaymentAttempt.ts` |
+| Payout status: `blocked` … `delayed_recovery` | `PAYOUT_STATUSES` → `PayoutStatus` | `src/models/Payout.ts` |
+| Transaction type / status | `TRANSACTION_TYPES` → `TransactionType`, `TRANSACTION_STATUSES` → `TransactionStatus` | `src/models/Transaction.ts` |
+| Notification `type` | `NotificationType` | `src/services/notify.ts` |
+| Gateway outcomes | `PaymentOutcome`, `TransferOutcome` (discriminated unions) | `src/services/squadco.ts` |
+
+Money fields are typed `Kobo`, which is an alias for `number` (`src/utils/money.ts`). The alias
+documents the unit, but the compiler does **not** stop you passing naira where kobo is expected.
+
+### Adding or changing an endpoint
+
+1. Write the handler in the right `src/routes/*.ts` file. Read input with
+   `parseBody(schema, req)` / `parseQuery(schema, req)` and the signed-in user with
+   `currentUser(req)` (all from `src/middleware`). Throw `err('SOME_CODE')` for failures; add any
+   new code to `ErrorCodes` in `src/utils/errors.ts` and to `docs/ERRORS.md`.
+2. Put business logic in `src/services/`, not in the route.
+3. Add the endpoint to `scripts/build-openapi.ts`, run `npm run docs`, and update this file. The
+   spec is maintained by hand, not generated from the types, so all three must be updated together.
+4. Add or extend a test in `test/`, then run `npm run typecheck` and `npm test`.
+
+---
+
 ## Appendix: end-to-end happy path (curl)
 
 ```bash
+# Server running locally: `npm run dev` (from source) or `npm run build && npm start` (compiled)
 API=http://localhost:4000/api/v1
 curl -X POST $API/auth/signup -H 'content-type: application/json' \
   -d '{"name":"Ada Obi","phone":"08031234567","email":"ada@example.com"}'

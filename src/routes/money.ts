@@ -35,7 +35,7 @@ router.get(
     res.json({
       ...roster,
       outstandingMembers: roster.members.filter((m) => m.outstanding > 0),
-      payout: payout ? await payoutsSvc.describePayout(payout) : null,
+      payout: payout ? await payoutsSvc.describePayout(payout, currentUser(req)) : null,
     });
   }),
 );
@@ -241,30 +241,37 @@ router.post(
 
 // ------------------------------------------------------------------ Payouts
 
-async function loadPayout(id: string, user: UserDoc, { coordinator = false } = {}) {
+async function loadPayout(id: string, user: UserDoc) {
   if (!v.isObjectId(id)) throw err('NOT_FOUND', 'Payout not found.');
   const payout = await Payout.findById(id);
   if (!payout) throw err('NOT_FOUND', 'Payout not found.');
-  await G.loadGroupForUser(payout.groupId, user, { coordinator });
-  return payout;
+  const { group } = await G.loadGroupForUser(payout.groupId, user);
+  return { payout, group };
 }
 
 router.get(
   '/payouts/:id',
   h(async (req, res) => {
-    const payout = await loadPayout(param(req, 'id'), currentUser(req));
-    res.json({ payout: await payoutsSvc.describePayout(payout) });
+    const user = currentUser(req);
+    const { payout } = await loadPayout(param(req, 'id'), user);
+    res.json({ payout: await payoutsSvc.describePayout(payout, user) });
   }),
 );
 
-/** Payout Eligible → "Start payout" (coordinator or staff). */
+/**
+ * Payout Eligible → "Payout". The recipient whose turn it is can start their own payout; the
+ * coordinator and staff can start it on their behalf. Other members get ACCESS_DENIED.
+ */
 router.post(
   '/payouts/:id/start',
   h(async (req, res) => {
     const user = currentUser(req);
-    const payout = await loadPayout(param(req, 'id'), user, { coordinator: true });
+    const { payout, group } = await loadPayout(param(req, 'id'), user);
+    if (!payoutsSvc.canStartPayout(payout, group, user)) {
+      throw err('ACCESS_DENIED', 'Only the member receiving this payout or the coordinator can start it.');
+    }
     const updated = await payoutsSvc.startPayout(payout._id, user._id);
-    res.json({ payout: await payoutsSvc.describePayout(updated) });
+    res.json({ payout: await payoutsSvc.describePayout(updated, user) });
   }),
 );
 
@@ -274,7 +281,7 @@ router.post(
   h(async (req, res) => {
     const user = currentUser(req);
     const { message } = parseBody(z.object({ message: z.string().trim().min(5).max(2000) }), req);
-    const payout = await loadPayout(param(req, 'id'), user);
+    const { payout } = await loadPayout(param(req, 'id'), user);
     const ticket = await SupportTicket.create({
       kind: 'payout',
       userId: user._id,
@@ -293,7 +300,7 @@ router.get(
   h(async (req, res) => {
     const memberships = await Membership.find({ userId: currentUser(req)._id, status: 'joined' });
     const list = await Payout.find({ recipientMembershipId: { $in: memberships.map((m) => m._id) } }).sort({ createdAt: -1 });
-    res.json({ payouts: await Promise.all(list.map((p) => payoutsSvc.describePayout(p))) });
+    res.json({ payouts: await Promise.all(list.map((p) => payoutsSvc.describePayout(p, currentUser(req)))) });
   }),
 );
 

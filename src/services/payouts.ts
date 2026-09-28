@@ -93,7 +93,20 @@ async function sendTransfer(ctx: AttemptContext): Promise<PayoutDoc> {
   return (await applyTransferOutcome(reference, result)) ?? payout;
 }
 
-/** Coordinator/admin (or the auto-payout job) releases an eligible payout. */
+/**
+ * Who may press "Payout" on an eligible payout: the recipient whose turn it is, the group's
+ * coordinator, or staff. The money only ever goes to the recipient's verified account.
+ */
+export function canStartPayout(
+  payout: Pick<PayoutDoc, 'recipientUserId'>,
+  group: Pick<GroupDoc, 'coordinatorId'>,
+  user: Pick<UserDoc, '_id' | 'isAdmin'>,
+): boolean {
+  const uid = String(user._id);
+  return Boolean(user.isAdmin) || String(group.coordinatorId) === uid || String(payout.recipientUserId) === uid;
+}
+
+/** The recipient, the coordinator or staff (or the auto-payout job) releases an eligible payout. */
 export async function startPayout(payoutId: Types.ObjectId | string, actorId: Types.ObjectId | null): Promise<PayoutDoc> {
   const ctx = await beginAttempt(payoutId, ['eligible'], 'processing', actorId);
   await logActivity(
@@ -267,10 +280,14 @@ export type PayoutView = Json<PayoutDoc> & {
   confirmedAmount: Kobo;
   outstandingAmount: Kobo;
   blockingMembers: Array<{ membershipId: string; name: string | null; outstanding: Kobo }>;
+  /** True when the viewer is this payout's recipient. */
+  viewerIsRecipient: boolean;
+  /** True when the payout is eligible and the viewer may start it (recipient, coordinator or staff). */
+  viewerCanStart: boolean;
 };
 
 /** Shape used by every payout screen (Blocked / Eligible / Processing / Sent / Failed / Delayed Recovery). */
-export async function describePayout(payout: PayoutDoc): Promise<PayoutView> {
+export async function describePayout(payout: PayoutDoc, viewer?: Pick<UserDoc, '_id' | 'isAdmin'>): Promise<PayoutView> {
   const [cycle, recipient, group] = await Promise.all([
     Cycle.findById(payout.cycleId),
     payout.recipientUserId ? User.findById(payout.recipientUserId) : null,
@@ -302,5 +319,7 @@ export async function describePayout(payout: PayoutDoc): Promise<PayoutView> {
     confirmedAmount: confirmed,
     outstandingAmount: Math.max(0, expected - confirmed),
     blockingMembers,
+    viewerIsRecipient: Boolean(viewer && String(payout.recipientUserId) === String(viewer._id)),
+    viewerCanStart: Boolean(viewer && group && payout.status === 'eligible' && canStartPayout(payout, group, viewer)),
   };
 }

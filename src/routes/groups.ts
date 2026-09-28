@@ -599,7 +599,7 @@ router.get(
     return res.json({
       ...roster,
       outstandingMembers: roster.members.filter((m) => m.outstanding > 0),
-      payout: payout ? await payouts.describePayout(payout) : null,
+      payout: payout ? await payouts.describePayout(payout, currentUser(req)) : null,
     });
   }),
 );
@@ -621,7 +621,7 @@ router.get(
   h(async (req, res) => {
     const { group } = await G.loadGroupForUser(param(req, 'id'), currentUser(req));
     const list = await Payout.find({ groupId: group._id }).sort({ createdAt: 1 });
-    res.json({ payouts: await Promise.all(list.map((p) => payouts.describePayout(p))) });
+    res.json({ payouts: await Promise.all(list.map((p) => payouts.describePayout(p, currentUser(req)))) });
   }),
 );
 
@@ -645,7 +645,7 @@ router.get(
       unpaidCount: roster?.unpaidCount ?? 0,
       outstandingMembers: roster ? roster.members.filter((m) => m.outstanding > 0) : [],
       nextRecipient: await G.nextRecipient(group),
-      payout: payout ? await payouts.describePayout(payout) : null,
+      payout: payout ? await payouts.describePayout(payout, currentUser(req)) : null,
       recentActivity: recent.map((a) => a.toJSON()),
       quickLinks: ['payment-status', 'add-member', 'remind', 'turn-order', 'activity', 'announcements'],
     });
@@ -703,7 +703,7 @@ router.post(
     const body = parseBody(z.object({ title: z.string().trim().min(2).max(100), body: z.string().trim().min(2).max(2000) }), req);
     const { group } = await G.loadGroupForUser(param(req, 'id'), user, { coordinator: true });
     const a = await Announcement.create({ groupId: group._id, authorId: user._id, ...body });
-    await logActivity(group._id, user._id, 'announcement', `${user.name} posted: ${a.title}`, { announcementId: a._id });
+    await logActivity(group._id, user._id, 'announcement', `${user.name} posted: ${a.title}`, { announcementId: a._id, title: a.title });
     const ms = await Membership.find({ groupId: group._id, status: 'joined', userId: { $ne: user._id } });
     await notify(
       ms.map((m) => m.userId),
@@ -716,22 +716,62 @@ router.post(
 router.get(
   '/:id/activity',
   h(async (req, res) => {
-    const { before, limit } = parseQuery(
-      z.object({ before: z.coerce.date().optional(), limit: z.coerce.number().int().min(1).max(100).default(30) }),
+    const { before, limit, eventType } = parseQuery(
+      z.object({
+        before: z.coerce.date().optional(),
+        limit: z.coerce.number().int().min(1).max(100).default(30),
+        // e.g. ?eventType=announcement, or several: ?eventType=announcement,payout_sent
+        eventType: z
+          .string()
+          .regex(/^[a-z_]+(,[a-z_]+)*$/, 'Comma-separated event types')
+          .transform((s) => s.split(','))
+          .optional(),
+      }),
       req,
     );
     const { group } = await G.loadGroupForUser(param(req, 'id'), currentUser(req));
-    const list = await ActivityLog.find({ groupId: group._id, ...(before ? { createdAt: { $lt: before } } : {}) })
+    const list = await ActivityLog.find({
+      groupId: group._id,
+      ...(before ? { createdAt: { $lt: before } } : {}),
+      ...(eventType ? { eventType: { $in: eventType } } : {}),
+    })
       .sort({ createdAt: -1 })
       .limit(limit)
       .populate<{ actorId: { _id: Types.ObjectId; name: string } | null }>('actorId', 'name');
+
+    // Announcements live in the shared Activity feed: attach the full announcement to its item.
+    const announcementIds = list
+      .filter((a) => a.eventType === 'announcement')
+      .map((a) => (a.data as { announcementId?: unknown } | undefined)?.announcementId)
+      .filter((id): id is Types.ObjectId | string => Boolean(id));
+    const announcements = announcementIds.length
+      ? await Announcement.find({ _id: { $in: announcementIds }, groupId: group._id }).populate<{
+          authorId: { _id: Types.ObjectId; name: string } | null;
+        }>('authorId', 'name')
+      : [];
+    const announcementById = new Map(announcements.map((a) => [String(a._id), a]));
+
     const last = list[list.length - 1];
     res.json({
-      activity: list.map((a) => ({
-        ...a.toJSON(),
-        actorId: a.actorId ? String(a.actorId._id) : null,
-        actorName: a.actorId?.name ?? 'TurnByTurn',
-      })),
+      activity: list.map((a) => {
+        const annId = (a.data as { announcementId?: unknown } | undefined)?.announcementId;
+        const ann = a.eventType === 'announcement' && annId ? announcementById.get(String(annId)) : undefined;
+        return {
+          ...a.toJSON(),
+          actorId: a.actorId ? String(a.actorId._id) : null,
+          actorName: a.actorId?.name ?? 'TurnByTurn',
+          announcement: ann
+            ? {
+                id: String(ann._id),
+                title: ann.title,
+                body: ann.body,
+                authorId: ann.authorId ? String(ann.authorId._id) : null,
+                authorName: ann.authorId?.name ?? null,
+                createdAt: ann.createdAt,
+              }
+            : null,
+        };
+      }),
       nextBefore: list.length === limit && last ? last.createdAt : null,
     });
   }),

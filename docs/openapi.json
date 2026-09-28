@@ -136,7 +136,18 @@
             "pattern": "^[a-f0-9]{24}$"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Legal name (bank-name matching, receipts, member lists)"
+          },
+          "preferredName": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 40,
+            "description": "What the user wants to be called"
+          },
+          "displayName": {
+            "type": "string",
+            "description": "preferredName, else the first word of name. Read-only"
           },
           "phone": {
             "type": "string",
@@ -975,6 +986,13 @@
                 }
               }
             }
+          },
+          "viewerIsRecipient": {
+            "type": "boolean"
+          },
+          "viewerCanStart": {
+            "type": "boolean",
+            "description": "Eligible and the viewer is the recipient, coordinator or staff: show the Payout button"
           }
         }
       },
@@ -1098,9 +1116,170 @@
           "summary": {
             "type": "string"
           },
+          "data": {
+            "type": "object"
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "announcement": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{24}$"
+              },
+              "title": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string"
+              },
+              "authorId": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{24}$"
+              },
+              "authorName": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "nullable": true,
+            "description": "Set on announcement events; null otherwise"
+          }
+        }
+      },
+      "NextPayout": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "eligible",
+              "processing",
+              "failed",
+              "delayed_recovery",
+              "sent",
+              "blocked",
+              "upcoming"
+            ]
+          },
+          "payoutId": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{24}$",
+            "nullable": true
+          },
+          "groupId": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{24}$"
+          },
+          "groupName": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer"
+          },
+          "amount": {
+            "type": "integer",
+            "description": "Amount in kobo (₦1 = 100)"
+          },
+          "collected": {
+            "type": "integer",
+            "description": "Blocked only: collected so far",
+            "nullable": true
+          },
+          "expectedDate": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "cyclesAway": {
+            "type": "integer",
+            "nullable": true
+          },
+          "sentAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "reference": {
+            "type": "string",
+            "nullable": true
+          },
+          "failureReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "canStart": {
+            "type": "boolean"
+          },
+          "bankAccountReady": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SavingsOverview": {
+        "type": "object",
+        "properties": {
+          "totalConfirmedContributions": {
+            "type": "integer",
+            "description": "Confirmed contribution principal, fees excluded"
+          },
+          "totalServiceFeesPaid": {
+            "type": "integer",
+            "description": "Amount in kobo (₦1 = 100)"
+          },
+          "totalPayoutsReceived": {
+            "type": "integer",
+            "description": "Amount in kobo (₦1 = 100)"
+          },
+          "payoutsReceivedCount": {
+            "type": "integer"
+          },
+          "currentCycle": {
+            "type": "object",
+            "properties": {
+              "amountDue": {
+                "type": "integer",
+                "description": "Amount in kobo (₦1 = 100)"
+              },
+              "amountPaid": {
+                "type": "integer",
+                "description": "Amount in kobo (₦1 = 100)"
+              },
+              "outstanding": {
+                "type": "integer",
+                "description": "Amount in kobo (₦1 = 100)"
+              },
+              "percentPaid": {
+                "type": "number"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "unpaid",
+                  "partial",
+                  "paid"
+                ]
+              },
+              "nextDueDate": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true
+              },
+              "groupCount": {
+                "type": "integer"
+              }
+            }
+          },
+          "nextPayout": {
+            "$ref": "#/components/schemas/NextPayout",
+            "nullable": true
           }
         }
       },
@@ -2020,7 +2199,7 @@
         "tags": [
           "Profile"
         ],
-        "summary": "Personal Information (name, income)",
+        "summary": "Personal Information (name, preferred name, income)",
         "operationId": "patchUsersMe",
         "responses": {
           "200": {
@@ -2068,6 +2247,11 @@
                 "properties": {
                   "name": {
                     "type": "string"
+                  },
+                  "preferredName": {
+                    "type": "string",
+                    "nullable": true,
+                    "maxLength": 40
                   },
                   "income": {
                     "type": "object",
@@ -2861,7 +3045,7 @@
         "tags": [
           "Home"
         ],
-        "summary": "Member Home / Returning Home: cross-group overview",
+        "summary": "Home / Returning Home: cross-group overview + Savings Overview",
         "operationId": "getHome",
         "responses": {
           "200": {
@@ -2871,6 +3055,32 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{24}$"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "preferredName": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "displayName": {
+                          "type": "string"
+                        },
+                        "initials": {
+                          "type": "string"
+                        },
+                        "profilePhotoUrl": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      }
+                    },
                     "summary": {
                       "type": "object",
                       "properties": {
@@ -2886,12 +3096,12 @@
                         }
                       }
                     },
+                    "savings": {
+                      "$ref": "#/components/schemas/SavingsOverview"
+                    },
                     "nextDue": {
                       "type": "object",
                       "nullable": true
-                    },
-                    "upcomingPayout": {
-                      "$ref": "#/components/schemas/Payout"
                     },
                     "groups": {
                       "type": "array",
@@ -5272,7 +5482,7 @@
         "tags": [
           "Groups"
         ],
-        "summary": "Announcements",
+        "summary": "Announcements list (kept for compatibility; the app shows announcements in Activity)",
         "operationId": "getGroupsIdAnnouncements",
         "parameters": [
           {
@@ -5329,7 +5539,7 @@
         "tags": [
           "Coordinator"
         ],
-        "summary": "Post announcement (push to members)",
+        "summary": "Post announcement (appears in Activity; pushed to members)",
         "operationId": "postGroupsIdAnnouncements",
         "parameters": [
           {
@@ -5407,7 +5617,7 @@
         "tags": [
           "Groups"
         ],
-        "summary": "Group Activity feed",
+        "summary": "Shared Activity feed (announcement items embed the announcement)",
         "operationId": "getGroupsIdActivity",
         "parameters": [
           {
@@ -5433,6 +5643,16 @@
             "required": false,
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "eventType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "announcement,payout_sent",
+              "description": "Comma-separated filter"
             }
           }
         ],
@@ -6637,7 +6857,7 @@
         "tags": [
           "Payouts"
         ],
-        "summary": "Payout Eligible → Start payout (coordinator)",
+        "summary": "Payout: the recipient starts their own eligible payout (coordinator/staff may too)",
         "operationId": "postPayoutsIdStart",
         "parameters": [
           {

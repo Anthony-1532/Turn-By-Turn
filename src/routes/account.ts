@@ -14,6 +14,7 @@ import type { Kobo } from '../utils/money';
 import * as G from '../services/groups';
 import * as payments from '../services/payments';
 import * as payoutsSvc from '../services/payouts';
+import { savingsOverview } from '../services/home';
 
 const router = express.Router();
 const { z } = v;
@@ -69,19 +70,22 @@ router.get(
     const dueTime = (card: HomeGroupCard) => (card.currentCycle ? new Date(card.currentCycle.dueDate).getTime() : Infinity);
     cards.sort((a, b) => dueTime(a) - dueTime(b));
     const nextDue = cards.find((c) => c.myContribution && c.myContribution.outstanding > 0) ?? null;
-    const upcomingPayout = await Payout.findOne({
-      recipientMembershipId: { $in: memberships.map((m) => m._id) },
-      status: { $in: ['blocked', 'eligible', 'processing', 'failed', 'delayed_recovery'] },
-    }).sort({ createdAt: 1 });
     res.json({
-      user: { id: String(user._id), name: user.name, initials: user.initials, profilePhotoUrl: user.profilePhotoUrl },
+      user: {
+        id: String(user._id),
+        name: user.name,
+        preferredName: user.preferredName ?? null,
+        displayName: user.displayName,
+        initials: user.initials,
+        profilePhotoUrl: user.profilePhotoUrl,
+      },
       summary: {
         groupCount: cards.length,
         coordinatingCount: cards.filter((c) => c.role === 'coordinator').length,
         totalOutstanding,
       },
+      savings: await savingsOverview(user, memberships, byId),
       nextDue,
-      upcomingPayout: upcomingPayout ? await payoutsSvc.describePayout(upcomingPayout) : null,
       groups: cards,
       unreadNotifications: await Notification.countDocuments({ userId: user._id, read: false }),
       quickActions: cards.length ? ['pay', 'join-group', 'create-group', 'history'] : ['join-group', 'create-group'],
@@ -193,7 +197,7 @@ router.get(
       transaction: toJson(t),
       related: related.map((r) => toJson(r)),
       receipt: attempt?.status === 'success' ? await payments.receiptFor(attempt) : null,
-      payout: payout ? await payoutsSvc.describePayout(payout) : null,
+      payout: payout ? await payoutsSvc.describePayout(payout, currentUser(req)) : null,
     });
   }),
 );

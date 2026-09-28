@@ -153,7 +153,7 @@ router.post(
   '/payouts/:id/retry',
   h(async (req, res) => {
     const p = await payoutsSvc.retryPayout(param(req, 'id'), currentUser(req)._id);
-    res.json({ payout: await payoutsSvc.describePayout(p) });
+    res.json({ payout: await payoutsSvc.describePayout(p, currentUser(req)) });
   }),
 );
 
@@ -161,7 +161,7 @@ router.post(
   '/payouts/:id/start',
   h(async (req, res) => {
     const p = await payoutsSvc.startPayout(param(req, 'id'), currentUser(req)._id);
-    res.json({ payout: await payoutsSvc.describePayout(p) });
+    res.json({ payout: await payoutsSvc.describePayout(p, currentUser(req)) });
   }),
 );
 

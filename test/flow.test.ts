@@ -1,9 +1,9 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { api, setup, teardown, signUp, auth, futureDate } from './helpers';
+import { api, setup, teardown, signUp, auth, futureDate, pay, createGroup, NGN } from './helpers';
 import { User, Cycle, Transaction } from '../src/models';
 
-interface MemberRow { userId: string; membershipId: string }
+import type { MemberRow } from './helpers';
 interface TxRow { type: string }
 import * as cyclesSvc from '../src/services/cycles';
 import { setMockAccountName } from '../src/services/squadco';
@@ -11,62 +11,6 @@ import { setMockAccountName } from '../src/services/squadco';
 before(setup);
 after(teardown);
 
-const NGN = (n: number): number => n * 100;
-
-async function pay(token: string, cycleId: string, amount?: number, gatewayAmount?: number) {
-  const r = await api().post(`/api/v1/cycles/${cycleId}/contributions`).set(auth(token)).send(amount ? { amount } : {});
-  assert.equal(r.status, 201, JSON.stringify(r.body));
-  const ref = r.body.reference;
-  await api().post(`/api/v1/dev/payments/${ref}/complete`).send(gatewayAmount ? { amount: gatewayAmount } : {}).expect(200);
-  const v = await api().post(`/api/v1/payments/${ref}/verify`).set(auth(token));
-  assert.equal(v.status, 200);
-  return { init: r.body, verify: v.body, ref };
-}
-
-/** Creates and activates a 3-member monthly group: coordinator + 2 members. */
-async function createGroup() {
-  const coord = await signUp({ name: 'Grace Coordinator' });
-  const m1 = await signUp({ name: 'Bola Member' });
-  const m2 = await signUp({ name: 'Chidi Member' });
-
-  let r = await api().post('/api/v1/groups').set(auth(coord.token)).send({ name: 'Unity Test Ajo', contributionAmount: NGN(50000) });
-  assert.equal(r.status, 201);
-  const gid = r.body.group.id;
-  assert.equal(r.body.group.feeNote, 'TurnByTurn fee: 2% added on top');
-
-  r = await api().patch(`/api/v1/groups/${gid}/draft`).set(auth(coord.token)).send({ cycleFrequency: 'monthly', firstDueDate: futureDate(10), memberCount: 3 });
-  assert.equal(r.status, 200);
-  assert.equal(r.body.group.expectedCycleTotal, NGN(150000));
-  assert.equal(r.body.setup.readyToActivate, false);
-
-  // One member invited by phone (claims reserved slot), one joins by code.
-  r = await api().post(`/api/v1/groups/${gid}/members`).set(auth(coord.token)).send({ phone: m1.phone });
-  assert.equal(r.status, 201);
-  assert.equal(r.body.membership.status, 'invited');
-
-  const preview = await api().post('/api/v1/groups/join/preview').set(auth(m2.token)).send({ code: `TBT-${r.body.group.inviteCode}` });
-  assert.equal(preview.status, 200);
-  assert.equal(preview.body.offeredPosition, 3);
-  await api().post('/api/v1/groups/join').set(auth(m2.token)).send({ code: r.body.group.inviteCode }).expect(201);
-  await api().post('/api/v1/groups/join').set(auth(m1.token)).send({ code: r.body.group.inviteCode }).expect(201);
-
-  // Reorder: m1 first, coordinator second, m2 third.
-  const setupView = await api().get(`/api/v1/groups/${gid}/setup`).set(auth(coord.token));
-  const byUser = Object.fromEntries((setupView.body.members as MemberRow[]).map((m) => [m.userId, m.membershipId]));
-  const order = [byUser[m1.user.id], byUser[coord.user.id], byUser[m2.user.id]];
-  r = await api().put(`/api/v1/groups/${gid}/payout-order`).set(auth(coord.token)).send({ order });
-  assert.equal(r.status, 200);
-  assert.equal(r.body.setup.readyToActivate, true);
-
-  const review = await api().get(`/api/v1/groups/${gid}/review`).set(auth(coord.token));
-  assert.equal(review.body.summary.perMemberCharge.serviceFee, NGN(1000));
-  assert.match(review.body.warning, /cannot change/);
-
-  r = await api().post(`/api/v1/groups/${gid}/activate`).set(auth(coord.token));
-  assert.equal(r.status, 200, JSON.stringify(r.body));
-  assert.equal(r.body.group.status, 'active');
-  return { gid, coord, m1, m2, cycleId: r.body.currentCycle.id, inviteCode: r.body.invite.code };
-}
 
 test('full rotation: create, pay (full + partial), payout, next cycle', async () => {
   const { gid, coord, m1, m2, cycleId } = await createGroup();

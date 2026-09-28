@@ -120,13 +120,24 @@ export async function checkCycleFunded(
   await logActivity(group._id, actorId, 'cycle_complete', `${updated.periodLabel} is fully funded. Payout is ready.`, {
     cycleId: cycle._id,
   });
-  await notify([group.coordinatorId, updated.recipientUserId], {
+  const payoutData = { cycleId: String(cycle._id), payoutId: payout ? String(payout._id) : undefined };
+  // The recipient can start their own payout; the coordinator is told it is ready too.
+  await notify([updated.recipientUserId], {
     type: 'payout_eligible',
-    title: `${group.name}: payout ready`,
-    body: `${updated.periodLabel} collected ${formatNaira(updated.confirmedReceived)}. The payout can now be released.`,
+    title: `${group.name}: it's your turn`,
+    body: `${formatNaira(updated.confirmedReceived)} is ready for you. Tap Payout to receive it.`,
     groupId: group._id,
-    data: { cycleId: String(cycle._id), payoutId: payout ? String(payout._id) : undefined },
+    data: payoutData,
   });
+  if (String(group.coordinatorId) !== String(updated.recipientUserId)) {
+    await notify([group.coordinatorId], {
+      type: 'payout_eligible',
+      title: `${group.name}: payout ready`,
+      body: `${updated.periodLabel} collected ${formatNaira(updated.confirmedReceived)}. The recipient can now take their payout.`,
+      groupId: group._id,
+      data: payoutData,
+    });
+  }
 
   if (updated.cycleNumber < group.payoutOrder.length) {
     await openCycle(group, updated.cycleNumber + 1);

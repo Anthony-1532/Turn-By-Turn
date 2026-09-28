@@ -36,6 +36,9 @@ export type NotificationPreferenceKey =
 const userSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
+    // What the user likes to be called in the app ("Ngozi" vs legal "Ngozi Adaeze Okafor").
+    // Legal-name contexts (bank-name matching, receipts, member lists) keep using `name`.
+    preferredName: { type: String, trim: true, maxlength: 40 },
     phone: { type: String, required: true, trim: true }, // E.164, e.g. +2348012345678
     email: { type: String, required: true, trim: true, lowercase: true },
     passwordHash: { type: String },
@@ -79,6 +82,12 @@ const userSchema = new mongoose.Schema(
       initials: {
         get(this: { name: string }): string {
           return initialsOf(this.name);
+        },
+      },
+      /** Name for greetings: the preferred name, else the first word of the legal name. */
+      displayName: {
+        get(this: { name: string; preferredName?: string | null }): string {
+          return this.preferredName || this.name.split(/\s+/)[0] || this.name;
         },
       },
     },

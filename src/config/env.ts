@@ -85,6 +85,11 @@ export const config = {
     autoStart: bool('AUTO_START_PAYOUTS', false),
   },
 
+  home: {
+    // How long a sent payout keeps showing as "Payout sent" in the Home savings overview.
+    sentPayoutVisibleDays: int('HOME_SENT_PAYOUT_VISIBLE_DAYS', 14),
+  },
+
   reminders: {
     cooldownHours: int('REMINDER_COOLDOWN_HOURS', 24),
   },

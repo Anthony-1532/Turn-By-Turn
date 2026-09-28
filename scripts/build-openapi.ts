@@ -42,7 +42,9 @@ const schemas = {
   BankAccount: obj({ bankCode: s(), bankName: s(), accountNumber: s(), accountName: s(), verified: b(), nameMatch: b(), verifiedAt: s({ format: 'date-time' }) }),
   User: obj({
     id,
-    name: s(),
+    name: s({ description: 'Legal name (bank-name matching, receipts, member lists)' }),
+    preferredName: s({ nullable: true, maxLength: 40, description: 'What the user wants to be called' }),
+    displayName: s({ description: 'preferredName, else the first word of name. Read-only' }),
     phone: s({ example: '+2348031000001' }),
     email: s(),
     status: s({ enum: ['pending_verification', 'pending_password', 'active', 'suspended'] }),
@@ -185,6 +187,8 @@ const schemas = {
     cycle: obj({ id, number: i(), periodLabel: s(), dueDate: s(), status: s() }),
     recipient: obj({ id, name: s(), initials: s() }),
     blockingMembers: arr(obj({ membershipId: id, name: s(), outstanding: kobo() })),
+    viewerIsRecipient: b(),
+    viewerCanStart: { type: 'boolean', description: 'Eligible and the viewer is the recipient, coordinator or staff: show the Payout button' },
   }),
   Transaction: obj({
     id,
@@ -201,7 +205,53 @@ const schemas = {
     meta: { type: 'object' },
   }),
   Notification: obj({ id, type: s(), title: s(), body: s(), groupId: id, data: { type: 'object' }, read: b(), createdAt: s({ format: 'date-time' }) }),
-  Activity: obj({ id, groupId: id, actorId: id, actorName: s(), eventType: s(), summary: s(), createdAt: s({ format: 'date-time' }) }),
+  Activity: obj({
+    id,
+    groupId: id,
+    actorId: id,
+    actorName: s(),
+    eventType: s(),
+    summary: s(),
+    data: { type: 'object' },
+    createdAt: s({ format: 'date-time' }),
+    announcement: {
+      ...obj({ id, title: s(), body: s(), authorId: id, authorName: s(), createdAt: s({ format: 'date-time' }) }),
+      nullable: true,
+      description: 'Set on announcement events; null otherwise',
+    },
+  }),
+  NextPayout: obj({
+    state: s({ enum: ['eligible', 'processing', 'failed', 'delayed_recovery', 'sent', 'blocked', 'upcoming'] }),
+    payoutId: { ...id, nullable: true },
+    groupId: id,
+    groupName: s(),
+    position: i(),
+    amount: kobo(),
+    collected: { ...kobo('Blocked only: collected so far'), nullable: true },
+    expectedDate: s({ format: 'date-time', nullable: true }),
+    cyclesAway: { type: 'integer', nullable: true },
+    sentAt: s({ format: 'date-time', nullable: true }),
+    reference: s({ nullable: true }),
+    failureReason: s({ nullable: true }),
+    canStart: b(),
+    bankAccountReady: b(),
+  }),
+  SavingsOverview: obj({
+    totalConfirmedContributions: kobo('Confirmed contribution principal, fees excluded'),
+    totalServiceFeesPaid: kobo(),
+    totalPayoutsReceived: kobo(),
+    payoutsReceivedCount: i(),
+    currentCycle: obj({
+      amountDue: kobo(),
+      amountPaid: kobo(),
+      outstanding: kobo(),
+      percentPaid: { type: 'number' },
+      status: s({ enum: ['none', 'unpaid', 'partial', 'paid'] }),
+      nextDueDate: s({ format: 'date-time', nullable: true }),
+      groupCount: i(),
+    }),
+    nextPayout: { ...ref('NextPayout'), nullable: true },
+  }),
   Announcement: obj({ id, groupId: id, authorId: id, authorName: s(), title: s(), body: s(), createdAt: s({ format: 'date-time' }) }),
   Ticket: obj({ id, kind: s({ enum: ['cycle_resolution', 'reconciliation', 'payout', 'general'] }), status: s({ enum: ['open', 'resolved'] }), message: s(), createdAt: s() }),
 };
@@ -246,7 +296,7 @@ add('post', '/auth/reset-password', 'Auth', 'Reset Password (revokes all session
 
 // --- Users
 add('get', '/users/me', 'Profile', 'Profile summary', { res: obj({ user: ref('User') }) });
-add('patch', '/users/me', 'Profile', 'Personal Information (name, income)', { body: obj({ name: s(), income: obj({ fixedIncome: kobo(), variableIncome: kobo() }) }), res: obj({ user: ref('User') }) });
+add('patch', '/users/me', 'Profile', 'Personal Information (name, preferred name, income)', { body: obj({ name: s(), preferredName: s({ nullable: true, maxLength: 40 }), income: obj({ fixedIncome: kobo(), variableIncome: kobo() }) }), res: obj({ user: ref('User') }) });
 add('put', '/users/me/photo', 'Profile', 'Upload profile photo (multipart field "photo", ≤5MB)', { multipart: true, res: obj({ user: ref('User') }) });
 add('delete', '/users/me/photo', 'Profile', 'Remove profile photo', { res: obj({ user: ref('User') }) });
 add('post', '/users/me/bank-account/resolve', 'Profile', 'Account Verified: Squadco name lookup', { body: obj({ bankCode: s(), accountNumber: s() }, ['bankCode', 'accountNumber']), res: obj({ bankCode: s(), bankName: s(), accountNumber: s(), accountName: s(), nameMatch: b() }), errors: ['BANK_VERIFICATION_FAILED', 'GATEWAY_ERROR'] });
@@ -261,7 +311,7 @@ add('post', '/users/me/devices', 'Profile', 'Register FCM device token', { statu
 add('delete', '/users/me/devices', 'Profile', 'Unregister FCM device token', { body: obj({ token: s() }, ['token']), res: obj({ removed: b() }) });
 
 // --- Home / history / notifications
-add('get', '/home', 'Home', 'Member Home / Returning Home: cross-group overview', { res: obj({ summary: obj({ groupCount: i(), coordinatingCount: i(), totalOutstanding: kobo() }), nextDue: { type: 'object', nullable: true }, upcomingPayout: ref('Payout'), groups: arr({ type: 'object' }), unreadNotifications: i() }) });
+add('get', '/home', 'Home', 'Home / Returning Home: cross-group overview + Savings Overview', { res: obj({ user: obj({ id, name: s(), preferredName: s({ nullable: true }), displayName: s(), initials: s(), profilePhotoUrl: s({ nullable: true }) }), summary: obj({ groupCount: i(), coordinatingCount: i(), totalOutstanding: kobo() }), savings: ref('SavingsOverview'), nextDue: { type: 'object', nullable: true }, groups: arr({ type: 'object' }), unreadNotifications: i() }) });
 add('get', '/transactions', 'History', 'Universal payment list grouped by month', { query: { month: s({ example: '2026-09' }), from: s({ format: 'date-time' }), to: s({ format: 'date-time' }), status: s({ enum: ['pending', 'success', 'failed', 'under_review', 'reversed'] }), type: s({ enum: ['contribution', 'fee', 'payout', 'refund', 'adjustment'] }), groupId: id, before: s({ format: 'date-time' }), limit: i() }, res: obj({ months: arr(obj({ month: s(), label: s(), totalOut: kobo(), totalIn: kobo(), transactions: arr(ref('Transaction')) })), count: i(), nextBefore: s({ nullable: true }) }) });
 add('get', '/transactions/filters', 'History', 'Filter sheet values (period, status, type, group)', { res: obj({ periods: arr(obj({ month: s(), label: s() })), statuses: arr(s()), types: arr(s()), groups: arr(obj({ id, name: s() })) }) });
 add('get', '/transactions/{id}', 'History', 'Transaction details (+ receipt / payout)', { res: obj({ transaction: ref('Transaction'), related: arr(ref('Transaction')), receipt: ref('Receipt'), payout: ref('Payout') }), errors: ['NOT_FOUND'] });
@@ -292,9 +342,9 @@ add('get', '/groups/{id}/payment-status', 'Groups', 'Payment Status / Who Has Pa
 add('get', '/groups/{id}/payouts', 'Payouts', 'All payouts in the group', { res: obj({ payouts: arr(ref('Payout')) }) });
 add('get', '/groups/{id}/dashboard', 'Coordinator', 'Manage Group dashboard', { res: obj({ group: ref('Group'), currentCycle: ref('Cycle'), collected: kobo(), expected: kobo(), remaining: kobo(), paidCount: i(), unpaidCount: i(), outstandingMembers: arr(ref('RosterRow')), nextRecipient: ref('Member'), payout: ref('Payout'), recentActivity: arr(ref('Activity')) }), errors: ['ACCESS_DENIED'] });
 add('patch', '/groups/{id}/settings', 'Coordinator', 'Group Settings (name, description, rules)', { body: obj({ name: s(), description: s(), rules: arr(s()) }), res: obj({ group: ref('Group') }) });
-add('get', '/groups/{id}/announcements', 'Groups', 'Announcements', { res: obj({ announcements: arr(ref('Announcement')) }) });
-add('post', '/groups/{id}/announcements', 'Coordinator', 'Post announcement (push to members)', { status: 201, body: obj({ title: s(), body: s() }, ['title', 'body']), res: obj({ announcement: ref('Announcement') }) });
-add('get', '/groups/{id}/activity', 'Groups', 'Group Activity feed', { query: { before: s({ format: 'date-time' }), limit: i() }, res: obj({ activity: arr(ref('Activity')), nextBefore: s({ nullable: true }) }) });
+add('get', '/groups/{id}/announcements', 'Groups', 'Announcements list (kept for compatibility; the app shows announcements in Activity)', { res: obj({ announcements: arr(ref('Announcement')) }) });
+add('post', '/groups/{id}/announcements', 'Coordinator', 'Post announcement (appears in Activity; pushed to members)', { status: 201, body: obj({ title: s(), body: s() }, ['title', 'body']), res: obj({ announcement: ref('Announcement') }) });
+add('get', '/groups/{id}/activity', 'Groups', 'Shared Activity feed (announcement items embed the announcement)', { query: { before: s({ format: 'date-time' }), limit: i(), eventType: s({ example: 'announcement,payout_sent', description: 'Comma-separated filter' }) }, res: obj({ activity: arr(ref('Activity')), nextBefore: s({ nullable: true }) }) });
 add('get', '/groups/{id}/reminders', 'Coordinator', 'Reminder history', { res: obj({ reminders: arr({ type: 'object' }), cooldownHours: i() }) });
 add('post', '/groups/{id}/reminders', 'Coordinator', 'Remind outstanding members → Reminder Sent (cooldown per member)', { status: 201, body: obj({ membershipIds: arr(id), message: s(), channels: arr(s({ enum: ['push', 'sms', 'email'] })) }), res: obj({ reminder: { type: 'object' }, sentCount: i(), skipped: arr(obj({ membershipId: id, reason: s(), nextAllowedAt: s() })) }), errors: ['REMINDER_COOLDOWN', 'GROUP_NOT_ACTIVE'] });
 
@@ -315,7 +365,7 @@ add('post', '/contributions/{id}/reconcile', 'Payments', 'Reconciliation Require
 // --- Payouts
 add('get', '/payouts', 'Payouts', 'My payouts across groups', { res: obj({ payouts: arr(ref('Payout')) }) });
 add('get', '/payouts/{id}', 'Payouts', 'Payout status (blocked / eligible / processing / sent / failed / delayed_recovery)', { res: obj({ payout: ref('Payout') }) });
-add('post', '/payouts/{id}/start', 'Payouts', 'Payout Eligible → Start payout (coordinator)', { res: obj({ payout: ref('Payout') }), errors: ['PAYOUT_NOT_ELIGIBLE', 'PAYOUT_ACCOUNT_MISSING', 'ACCESS_DENIED'] });
+add('post', '/payouts/{id}/start', 'Payouts', 'Payout: the recipient starts their own eligible payout (coordinator/staff may too)', { res: obj({ payout: ref('Payout') }), errors: ['PAYOUT_NOT_ELIGIBLE', 'PAYOUT_ACCOUNT_MISSING', 'ACCESS_DENIED'] });
 add('post', '/payouts/{id}/support', 'Payouts', 'Report a payout problem', { status: 201, body: obj({ message: s() }, ['message']), res: obj({ ticket: ref('Ticket') }) });
 
 // --- Support / public

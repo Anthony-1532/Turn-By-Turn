@@ -29,11 +29,19 @@ router.patch(
   h(async (req, res) => {
     const user = currentUser(req);
     const incomeField = z.number().int().min(0).nullable().optional();
-    const { name, income } = parseBody(
-      z.object({ name: v.name.optional(), income: z.object({ fixedIncome: incomeField, variableIncome: incomeField }).optional() }).strict(),
+    const { name, preferredName, income } = parseBody(
+      z
+        .object({
+          name: v.name.optional(),
+          // null (or an empty string) clears it
+          preferredName: z.string().trim().max(40, 'Use at most 40 characters').nullable().optional(),
+          income: z.object({ fixedIncome: incomeField, variableIncome: incomeField }).optional(),
+        })
+        .strict(),
       req,
     );
     if (name) user.name = name;
+    if (preferredName !== undefined) user.preferredName = preferredName || undefined;
     if (income) {
       for (const k of ['fixedIncome', 'variableIncome'] as const) {
         const value = income[k];

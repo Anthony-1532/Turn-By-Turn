@@ -157,7 +157,7 @@ Source: `src/routes/users.ts` · bank lookup in `services/squadco.ts` (`resolveA
 ### `GET /users/me` → 200
 ```json
 { "user": {
-  "id": "…", "name": "Ngozi Okafor", "initials": "NO", "phone": "+2348031000001", "email": "…",
+  "id": "…", "name": "Ngozi Okafor", "preferredName": "Ngo", "displayName": "Ngo", "initials": "NO", "phone": "+2348031000001", "email": "…",
   "profilePhotoUrl": "/api/v1/files/66f1…",
   "income": { "fixedIncome": 30000000, "variableIncome": 5000000 },
   "bankAccount": { "bankCode": "000013", "bankName": "Guaranty Trust Bank", "accountNumber": "0123000001",
@@ -171,7 +171,11 @@ Source: `src/routes/users.ts` · bank lookup in `services/squadco.ts` (`resolveA
 ```
 
 ### `PATCH /users/me`
-`{ "name": "…", "income": { "fixedIncome": 30000000, "variableIncome": null } }`. `null` clears a field. Phone and email are not editable here.
+`{ "name": "…", "preferredName": "Ada", "income": { "fixedIncome": 30000000, "variableIncome": null } }`. All fields optional; `null` clears a field. Phone and email are not editable here.
+
+- `name` is the legal name. It's used for bank-account name matching, receipts and group member lists.
+- `preferredName` (≤ 40 characters; `null` or `""` clears it) is what the user wants to be called.
+- Every user object also has a read-only `displayName`: the `preferredName` if set, otherwise the first word of `name`. Use it for greetings; the server uses it in emails.
 
 ### `PUT /users/me/photo`
 `multipart/form-data`, field `photo`: JPEG, PNG, WebP or HEIC, 5 MB max. Returns `{ user }` with the new `profilePhotoUrl` (served publicly from `GET /files/:id`).
@@ -217,11 +221,22 @@ Source: `src/routes/account.ts`
 ### `GET /home` → 200
 ```json
 {
-  "user": { "id": "…", "name": "Ngozi Okafor", "initials": "NO", "profilePhotoUrl": null },
+  "user": { "id": "…", "name": "Ngozi Okafor", "preferredName": "Ngo", "displayName": "Ngo", "initials": "NO", "profilePhotoUrl": null },
   "summary": { "groupCount": 2, "coordinatingCount": 1, "totalOutstanding": 2000000 },
+  "savings": {
+    "totalConfirmedContributions": 10000000,
+    "totalServiceFeesPaid": 200000,
+    "totalPayoutsReceived": 50000000,
+    "payoutsReceivedCount": 1,
+    "currentCycle": { "amountDue": 7000000, "amountPaid": 5000000, "outstanding": 2000000, "percentPaid": 71.4,
+                      "status": "partial", "nextDueDate": "…", "groupCount": 2 },
+    "nextPayout": { "state": "eligible", "payoutId": "…", "groupId": "…", "groupName": "Unity Women's Ajo",
+                    "position": 3, "amount": 50000000, "collected": null, "expectedDate": "…", "cyclesAway": null,
+                    "sentAt": null, "reference": null, "failureReason": null,
+                    "canStart": true, "bankAccountReady": true }
+  },
   "nextDue": { "groupId": "…", "name": "Family Circle", "role": "member", "currentCycle": {…},
                "myContribution": { "id": "…", "amountDue": 2000000, "amountPaid": 0, "outstanding": 2000000, "status": "unpaid" } },
-  "upcomingPayout": { /* Payout object, see §7 */ },
   "groups": [ { "groupId": "…", "name": "Unity Women's Ajo", "status": "active", "role": "coordinator",
                 "payoutPosition": 1, "hasReceivedPayout": true, "contributionAmount": 5000000,
                 "currentCycle": {…}, "myContribution": {…}, "nextRecipient": {…} } ],
@@ -230,6 +245,31 @@ Source: `src/routes/account.ts`
 }
 ```
 Groups are sorted by soonest due date.
+
+**`savings`: the Home Savings Overview.** Everything is computed on the server; the app doesn't need other calls to draw the card.
+
+| Field | Meaning |
+|---|---|
+| `totalConfirmedContributions` | All confirmed contribution money the user has paid, across all groups. The 2% fee is **excluded**. |
+| `totalServiceFeesPaid` | The 2% fees paid, shown separately. |
+| `totalPayoutsReceived`, `payoutsReceivedCount` | Payouts that have been sent to the user. |
+| `currentCycle` | Current-cycle payment progress, added up across every active group the user contributes to. `status` is `none` (no active groups), `unpaid`, `partial` or `paid`. `nextDueDate` is the earliest due date that still has money owing. Per-group detail is in `groups[].myContribution`. |
+| `nextPayout` | The single payout card to show, or `null` when the user has no pending turn and nothing sent recently. |
+
+`nextPayout.state` picks the card. If the user qualifies in several groups, the most important one wins, in this order:
+
+| `state` | Card | Notes |
+|---|---|---|
+| `eligible` | **Eligible** | It's the user's turn and the pot is fully collected. `canStart: true`, so show **Payout**, which calls `POST /payouts/{payoutId}/start`. If `bankAccountReady` is `false`, ask the user to add a bank account first; otherwise starting fails with `PAYOUT_ACCOUNT_MISSING`. |
+| `processing` | Processing | Transfer started, waiting for the bank. |
+| `failed`, `delayed_recovery` | Processing / existing failed-payout screens | `failureReason` is set; support retries it. |
+| `sent` | **Payout sent** | Stays on Home for `HOME_SENT_PAYOUT_VISIBLE_DAYS` (default 14) after `sentAt`. `reference` is the transfer reference. |
+| `blocked` | **Upcoming** ("your turn, collecting") | It's the user's cycle, but members still owe. `collected` of `amount` has been paid so far; `expectedDate` is the cycle due date. |
+| `upcoming` | **Upcoming** | The user's turn is in a future cycle. `payoutId` is `null`, `expectedDate` is the scheduled due date of their turn, and `cyclesAway` counts cycles until then (1 = next cycle). `amount` is the expected pot. |
+
+`position` is the user's place in the turn order (the same as the cycle number of their payout). `amount` is the confirmed pot once the cycle is collected, and the expected pot before that.
+
+> Changed: the older `upcomingPayout` field has been removed. It only covered pending payout states and never showed a sent payout. Use `savings.nextPayout` instead.
 
 ### `GET /transactions`
 Query (all optional): `month=2026-09`, `from`, `to` (ISO dates), `status` (`pending|success|failed|under_review|reversed`), `type` (`contribution|fee|payout|refund|adjustment`), `groupId`, `before`, `limit` (1–200, default 50).
@@ -349,8 +389,8 @@ Source: `src/routes/groups.ts` · `services/groups.ts` (`paymentRoster`, `cycleV
 | GET | `/groups/:id/cycles/current` | member | Cycle Progress / Cycle Overdue |
 | GET | `/groups/:id/payment-status` | member | Payment Status / Who Has Paid |
 | GET | `/groups/:id/payouts` | member | payout list |
-| GET | `/groups/:id/announcements` | member | Announcements |
-| GET | `/groups/:id/activity` | member | Group Activity / Activity |
+| GET | `/groups/:id/announcements` | member | Announcements list (kept for compatibility; the app shows announcements in Activity) |
+| GET | `/groups/:id/activity` | member | Activity (includes announcements) |
 | GET | `/groups/:id/invite` | member | Invite Members (share) |
 
 Non-members get `403 ACCESS_DENIED`; an unknown group ID gets `404 NOT_FOUND`.
@@ -415,7 +455,24 @@ In a roster row, `status` is the **contribution** status (`unpaid`, `partial`, `
 Payment-status payload + `outstandingMembers[]` + `payout` (Payout object). Drives both Cycle Progress and Cycle Overdue. When nothing is active it returns `{ cycle: null }`.
 
 ### `GET /groups/:id/activity`
-Query `before`, `limit` (≤100). → `{ activity: [{ id, eventType, summary, actorId, actorName, createdAt, data }], nextBefore }`. `actorName` is `"TurnByTurn"` for system events. Event types: `group_activated`, `member_invited`, `member_joined`, `cycle_opened`, `payment_full`, `payment_partial`, `cycle_complete`, `cycle_overdue`, `cycle_resolution_required`, `payout_started`, `payout_sent`, `payout_failed`, `announcement`, `reminder_sent`, `settings_updated`, `reconciliation_submitted`, `cycle_extended`, `cycle_released`, `group_completed`.
+The shared **Activity** feed. It covers joins, payments, payouts, reminders and announcements (announcements no longer have their own screen in the app).
+
+Query: `before`, `limit` (≤100), and optional `eventType` to filter, e.g. `?eventType=announcement` or `?eventType=payment_full,payment_partial`.
+
+```json
+{ "activity": [
+    { "id": "…", "eventType": "announcement", "summary": "Grace Coordinator posted: Meeting on Friday",
+      "actorId": "…", "actorName": "Grace Coordinator", "createdAt": "…", "data": { "announcementId": "…", "title": "Meeting on Friday" },
+      "announcement": { "id": "…", "title": "Meeting on Friday", "body": "We meet at 5pm to agree the new rules.",
+                        "authorId": "…", "authorName": "Grace Coordinator", "createdAt": "…" } },
+    { "id": "…", "eventType": "payment_full", "summary": "Bola Member paid ₦50,000 towards September cycle (fully paid).",
+      "actorId": "…", "actorName": "Bola Member", "createdAt": "…", "data": { "cycleId": "…", "reference": "TRX-0928-0004" },
+      "announcement": null } ],
+  "nextBefore": null }
+```
+Announcement items include the full `announcement` (title, body, author) so they can be shown in the feed without another call. Every other item has `announcement: null`. `actorName` is `"TurnByTurn"` for system events.
+
+Event types: `group_activated`, `member_invited`, `member_joined`, `cycle_opened`, `payment_full`, `payment_partial`, `cycle_complete`, `cycle_overdue`, `cycle_resolution_required`, `payout_started`, `payout_sent`, `payout_failed`, `announcement`, `reminder_sent`, `settings_updated`, `reconciliation_submitted`, `cycle_extended`, `cycle_released`, `group_completed`.
 
 ### `GET /groups/:id/invite`
 `{ code, link, canShare, shareMessage }`.
@@ -424,19 +481,18 @@ Query `before`, `limit` (≤100). → `{ activity: [{ id, eventType, summary, ac
 
 ## 6. Coordinator-only
 
-Source: `src/routes/groups.ts` (dashboard, member detail, settings, announcements, reminders) · `src/routes/money.ts` (start payout)
+Source: `src/routes/groups.ts`
 
-All of these return `403 ACCESS_DENIED` for plain members.
+All of these return `403 ACCESS_DENIED` for plain members. (Starting a payout is **not** coordinator-only any more. The recipient can start their own; see §8.)
 
 | Method | Path | Screen |
 |---|---|---|
 | GET | `/groups/:id/dashboard` | Manage Group |
 | GET | `/groups/:id/members/:membershipId` | Member Detail (members can view their own) |
 | PATCH | `/groups/:id/settings` | Group Settings |
-| POST | `/groups/:id/announcements` | Post announcement |
+| POST | `/groups/:id/announcements` | Post an announcement (it appears in everyone's Activity feed and is pushed to members) |
 | GET | `/groups/:id/reminders` | Reminders history |
 | POST | `/groups/:id/reminders` | Reminders → Reminder Sent |
-| POST | `/payouts/:id/start` | Payout Eligible → Start payout |
 
 ### `GET /groups/:id/dashboard`
 ```json
@@ -562,7 +618,7 @@ Source: `src/routes/money.ts` · state machine in `services/payouts.ts` (`startP
 |---|---|---|
 | GET | `/payouts` | my payouts across groups |
 | GET | `/payouts/:id` | member of the group |
-| POST | `/payouts/:id/start` | coordinator |
+| POST | `/payouts/:id/start` | the **recipient** (their own payout), the coordinator, or staff |
 | POST | `/payouts/:id/support` | member of the group |
 
 **Payout object** (drives Blocked / Eligible / Processing / Sent / Failed / Delayed Recovery):
@@ -576,15 +632,25 @@ Source: `src/routes/money.ts` · state machine in `services/payouts.ts` (`startP
   "reference": "PAY-0925-0001",
   "destination": { "bankCode": "000014", "bankName": "Access Bank", "accountNumber": "0123000002", "accountName": "AMAKA EZE" },
   "attempts": [ { "reference": "PAY-0925-0001", "status": "failed", "startedAt": "…", "finishedAt": "…", "failureReason": "…" } ],
-  "sentAt": null, "failureReason": null }
+  "sentAt": null, "failureReason": null,
+  "viewerIsRecipient": true, "viewerCanStart": false }
 ```
 
-State machine: `blocked` → (cycle fully paid) `eligible` → (Start payout) `processing` → `sent` | `failed` → (staff retry) `delayed_recovery` → `sent`.
+`viewerIsRecipient` is true when the signed-in user is this payout's recipient. `viewerCanStart` is true only when the payout is `eligible` **and** the signed-in user may start it (the recipient, the coordinator, or staff). Show the **Payout** button when `viewerCanStart` is true.
+
+State machine: `blocked` → (cycle fully paid) `eligible` → (Payout tapped) `processing` → `sent` | `failed` → (staff retry) `delayed_recovery` → `sent`.
+
+When a payout becomes eligible, the recipient gets a push: "it's your turn — tap Payout to receive it". The coordinator is told separately that it's ready.
 
 The payout amount is the full pot (`contributionAmount × memberCount`). The 2% fee is never taken from it.
 
 ### `POST /payouts/:id/start` → 200
-No body. → `{ payout }` (usually already `sent` or `failed`; `processing` if Squadco hasn't confirmed yet, in which case a job re-checks it). Errors: `PAYOUT_NOT_ELIGIBLE` (409, `details.status`), `PAYOUT_ACCOUNT_MISSING` (recipient has no verified bank), `ACCESS_DENIED`.
+The **Payout** button. The recipient whose turn it is can call this for their own eligible payout; the coordinator and staff can call it on the recipient's behalf. The money always goes to the **recipient's** verified bank account, whoever starts it.
+
+No body. → `{ payout }`: usually already `sent` or `failed`, or `processing` if Squadco hasn't confirmed yet (a job re-checks it). Errors:
+- `ACCESS_DENIED` (403): any other member.
+- `PAYOUT_NOT_ELIGIBLE` (409, `details.status`): not `eligible` yet, or already started.
+- `PAYOUT_ACCOUNT_MISSING` (409): the recipient has no verified bank account.
 
 ### `POST /payouts/:id/support` → 201
 `{ "message": "…" }` → `{ ticket }`.
@@ -675,7 +741,8 @@ ObjectIds are typed as `string`).
 | Quote | `Quote` | `src/services/payments.ts` |
 | Receipt | `Receipt` | `src/services/payments.ts` |
 | Verify `result` | `PaymentResult` | `src/routes/money.ts` |
-| Payout object | `PayoutView` | `src/services/payouts.ts` |
+| Payout object | `PayoutView` (includes `viewerIsRecipient`, `viewerCanStart`) | `src/services/payouts.ts` |
+| Home `savings` | `SavingsOverview`, `CycleProgressSummary`, `NextPayout`, `HomePayoutState` | `src/services/home.ts` |
 | Transaction row | `Json<TransactionDoc>` | `src/models/Transaction.ts` |
 | Job report | `JobReport` | `src/jobs/tasks.ts` |
 

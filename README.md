@@ -100,18 +100,18 @@ flow end to end:
 | Sign In / Forgot / Reset | `POST /auth/sign-in`, `/auth/forgot-password`, `/auth/reset-password`, `/auth/refresh`, `/auth/sign-out` |
 | Join Group (3 steps) | `POST /groups/join/preview` → `POST /groups/join` |
 | Create Group (5 steps) → Activated | `POST /groups` → `PATCH /groups/:id/draft` → `POST /groups/:id/members` → `PUT /groups/:id/payout-order` → `GET /groups/:id/review` → `POST /groups/:id/activate` |
-| Home / Returning Home | `GET /home` |
-| Group Overview, Members, Info, Announcements, Activity | `GET /groups/:id`, `/members`, `/info`, `/announcements`, `/activity` |
+| Home / Returning Home (incl. Savings Overview) | `GET /home` (`savings` block) |
+| Group Overview, Members, Info, Activity (announcements appear inside Activity) | `GET /groups/:id`, `/members`, `/info`, `/activity` |
 | Payment Status / Who Has Paid / Cycle Progress / Cycle Overdue | `GET /groups/:id/payment-status`, `/groups/:id/cycles/current` |
 | Pay (full or part) → Review → checkout | `GET /cycles/:id/my-contribution`, `GET /cycles/:id/contributions/quote?amount=`, `POST /cycles/:id/contributions`, then `POST /payments/:ref/verify` |
 | Payment received / Receipts | `GET /payments/:ref/receipt`, `GET /receipts` |
 | Reconciliation Required → Review Submitted | `POST /contributions/:id/reconcile` |
 | Resolution Required → Contact support | `POST /cycles/:id/support` |
-| Payout Blocked / Eligible / Processing / Sent / Failed / Delayed Recovery | `GET /payouts/:id`, `POST /payouts/:id/start` |
+| Payout Blocked / Eligible / Processing / Sent / Failed / Delayed Recovery | `GET /payouts/:id`, `POST /payouts/:id/start` (the recipient taps Payout themselves; the coordinator can too) |
 | Coordinator: Manage Group, Member Detail, Invite, Reminders, Settings, Turn Order | `GET /groups/:id/dashboard`, `/members/:membershipId`, `/invite`, `POST /groups/:id/reminders`, `PATCH /groups/:id/settings`, `GET /groups/:id/payout-order` |
 | History + Filter + Details | `GET /transactions?month=&status=&type=&groupId=`, `/transactions/filters`, `/transactions/:id` |
 | Notifications | `GET /notifications`, `POST /notifications/read`, `POST /users/me/devices` (FCM token) |
-| Profile | `GET/PATCH /users/me`, `PUT /users/me/photo` (multipart `photo`), `/users/me/trusted-contact`, `/users/me/notification-preferences`, `POST /users/me/password` |
+| Profile (incl. preferred name) | `GET/PATCH /users/me`, `PUT /users/me/photo` (multipart `photo`), `/users/me/trusted-contact`, `/users/me/notification-preferences`, `POST /users/me/password` |
 | Payment Help | `GET /content/help` |
 
 The full reference is in the OpenAPI spec.
@@ -128,7 +128,7 @@ Cycle n: open ──fully funded──▶ complete ──▶ opens Cycle n+1
            │
            └─ due + grace ──▶ overdue ──+7 days──▶ resolution_required (manual; staff resolve)
 
-Payout: blocked ──cycle complete──▶ eligible ──Start payout──▶ processing ──▶ sent
+Payout: blocked ──cycle complete──▶ eligible ──Payout tapped──▶ processing ──▶ sent
                                                                   └──▶ failed ──staff retry──▶ delayed_recovery ──▶ sent
 ```
 
@@ -232,9 +232,10 @@ test/                            end-to-end API tests (node:test + supertest)
    Paystack, not the group organiser."* The client's later comment names **Squadco**, so the backend
    is built on Squadco. Those two screens need their copy corrected. The API's own copy
    (`paymentNote` on review and activate) says "TurnByTurn's payment partner (Squadco)".
-2. **Automatic vs manual payout release.** The Payout Eligible screen has a "Start payout" button, so
-   release is **manual** (coordinator or staff) by default. Set `AUTO_START_PAYOUTS=true` to release
-   automatically once a cycle is fully funded.
+2. **Who releases a payout.** *Resolved:* the recipient taps **Payout** on their own eligible payout
+   (`POST /payouts/:id/start`). The coordinator and staff can also start it on the recipient's behalf.
+   The money always goes to the recipient's verified account. Set `AUTO_START_PAYOUTS=true` to
+   release automatically as soon as a cycle is fully funded.
 3. **Overdue grace period.** Defaults to 24h after the due date (`CYCLE_OVERDUE_GRACE_HOURS`), then
    7 days until Resolution Required (`CYCLE_RESOLUTION_AFTER_DAYS`). Both need confirming.
 4. **Income fields.** `income.fixedIncome` and `income.variableIncome` are stored for information only.

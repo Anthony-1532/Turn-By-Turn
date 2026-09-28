@@ -94,7 +94,7 @@ export async function notify(userIds: Array<Id | null | undefined>, n: NotifyInp
             to: u.email,
             toName: u.name,
             subject: opts.subject ?? n.title,
-            html: opts.html ?? layout(n.title, `<p>Hi ${escapeHtml(u.name.split(' ')[0])},</p><p>${escapeHtml(n.body)}</p>`),
+            html: opts.html ?? layout(n.title, `<p>Hi ${escapeHtml(u.displayName)},</p><p>${escapeHtml(n.body)}</p>`),
           }),
         );
       }
